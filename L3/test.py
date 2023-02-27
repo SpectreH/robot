@@ -1,76 +1,116 @@
-import math
-import robot
+"""L1 - line follower."""
+import PiBot
 
-# Set up the robot
-r = robot.Robot()
 
-# Define the potential field parameters
-k_att = 0.5 # attractive force constant
-k_rep = 1.0 # repulsive force constant
-d_min = 0.3 # minimum distance to obstacles
+class Robot:
+    """The robot class."""
 
-# Define the attractive force function
-def attractive_force(x, y, x_goal, y_goal):
-    dx = x_goal - x
-    dy = y_goal - y
-    d = math.sqrt(dx**2 + dy**2)
-    fx = k_att * dx / d
-    fy = k_att * dy / d
-    return fx, fy
+    def __init__(self):
+        """Class initialization."""
+        self.robot = PiBot.PiBot()
+        self.shutdown = False
+        self.leftmost_line_sensor = 0.0
+        self.second_line_sensor_from_left = 0.0
+        self.third_line_sensor_from_left = 0.0
+        self.third_line_sensor_from_right = 0.0
+        self.second_line_sensor_from_right = 0.0
+        self.rightmost_line_sensor = 0.0
 
-# Define the repulsive force function
-def repulsive_force(x, y, x_obs, y_obs):
-    dx = x_obs - x
-    dy = y_obs - y
-    d = math.sqrt(dx**2 + dy**2)
-    if d > d_min:
-        return 0, 0
-    else:
-        fx = -k_rep * (1/d - 1/d_min) * dx / d**3
-        fy = -k_rep * (1/d - 1/d_min) * dy / d**3
-        return fx, fy
+        self.current_direction_state = None
+        self.right_wheel_speed = 0
+        self.left_wheel_speed = 0
+        self.threshold = 400
 
-# Define the potential field function
-def potential_field(x, y, obstacles):
-    fx_rep = 0
-    fy_rep = 0
-    for obs in obstacles:
-        fx, fy = repulsive_force(x, y, obs[0], obs[1])
-        fx_rep += fx
-        fy_rep += fy
-    fx = fx_rep
-    fy = fy_rep
-    return fx, fy
+    def set_robot(self, robot: PiBot.PiBot()) -> None:
+        """Set robot reference."""
+        self.robot = robot
 
-# Define the line following function
-def follow_line():
-    line_pos = r.get_sensor_data()[1]
-    error = 0.5 - line_pos
-    k_p = 0.5
-    speed = 0.3
-    turn = k_p * error
-    return speed - turn, speed + turn
+    def sense(self):
+        """Read the sensor values from the PiBot API."""
+        [self.leftmost_line_sensor, self.second_line_sensor_from_left,
+            self.third_line_sensor_from_left] = [self.robot.get_leftmost_line_sensor(), self.robot.get_second_line_sensor_from_left(),
+                                                 self.robot.get_third_line_sensor_from_left()]
+        [self.rightmost_line_sensor, self.second_line_sensor_from_right,
+         self.third_line_sensor_from_right] = [self.robot.get_rightmost_line_sensor(), self.robot.get_second_line_sensor_from_right(),
+                                               self.robot.get_third_line_sensor_from_right()]
+        [self.front_left_distance_sensor, self.front_middle_distance_sensor,
+         self.front_right_distance_sensor] = [self.robot.get_front_left_laser(), self.robot.get_front_middle_laser(), self.robot.get_front_right_laser()]        
+        
+        self.get_line_direction()
 
-# Define the obstacle detection function
-def detect_obstacle():
-    distance = r.get_sensor_data()[0]
-    if distance < d_min:
-        return True
-    else:
-        return False
+    def get_line_direction(self):
+        """
+        Return the direction of the line based on sensor readings.
 
-# Main loop
-while True:
-    # Get the robot's position
-    x, y = r.get_position()
+        Returns:
+          -1: Line is on the right (i.e., the robot should turn right to reach the line again)
+           0: Robot is on the line (i.e., the robot should not turn to stay on the line) or no sensor info
+           1: Line is on the left (i.e., the robot should turn left to reach the line again)
+        """
+        if self.third_line_sensor_from_left <= self.threshold or self.third_line_sensor_from_right <= self.threshold:
+            self.current_direction_state = 0
+        elif self.leftmost_line_sensor <= self.threshold or self.second_line_sensor_from_left <= self.threshold:
+            self.current_direction_state = 1
+        elif self.rightmost_line_sensor <= self.threshold or self.second_line_sensor_from_right <= self.threshold:
+            self.current_direction_state = -1
 
-    # Check for obstacles and follow the line
-    if detect_obstacle():
-        # Avoid the obstacle using the potential field method
-        obstacles = [(x + d_min, y)]
-        fx, fy = potential_field(x, y, obstacles)
-        r.move(fx, fy)
-    else:
-        # Follow the line
-        fx, fy = follow_line()
-        r.move(fx, fy)
+        if self.third_line_sensor_from_left > self.threshold and self.third_line_sensor_from_right > self.threshold and self.current_direction_state in [None, 0]:
+            self.current_direction_state = 2
+
+    def move_forward(self):
+        """Make robot go forward."""
+        self.right_wheel_speed = 10
+        self.left_wheel_speed = 10
+
+    def make_spin(self):
+        """Make robot spin."""
+        self.right_wheel_speed = 10
+        self.left_wheel_speed = -10
+
+    def turn_left(self):
+        """Make robot turn left."""
+        self.right_wheel_speed = 11
+        self.left_wheel_speed = 0
+
+    def turn_right(self):
+        """Make robot turn right."""
+        self.right_wheel_speed = 0
+        self.left_wheel_speed = 11
+
+    def plan(self):
+        """Plan the next move."""
+        if self.current_direction_state == -1:
+            print("RIGHT")
+            self.turn_right()
+        elif self.current_direction_state == 1:
+            print("LEFT")
+            self.turn_left()
+        elif self.current_direction_state == 0:
+            print("FORWARD")
+            self.move_forward()
+        elif self.current_direction_state == 2:
+            print("SPIN")
+            self.make_spin()
+
+    def act(self):
+        """Do the moves."""
+        self.robot.set_right_wheel_speed(self.right_wheel_speed)
+        self.robot.set_left_wheel_speed(self.left_wheel_speed)
+
+    def spin(self):
+        """Call sense cyclically."""
+        while not self.shutdown:
+            self.sense()
+            self.plan()
+            self.act()
+            self.robot.sleep(0.05)
+
+
+def main():
+    """Create a Robot object and spin it."""
+    robot = Robot()
+    robot.spin()
+
+
+if __name__ == "__main__":
+    main()
